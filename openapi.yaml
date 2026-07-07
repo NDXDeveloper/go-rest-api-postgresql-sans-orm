@@ -1,0 +1,1857 @@
+openapi: 3.0.3
+info:
+  title: API Bibliothèque
+  description: >
+    API REST de gestion de bibliothèque, écrite en Go avec PostgreSQL **sans ORM**
+    (uniquement `database/sql`). Authentification par JWT (Bearer) avec refresh
+    tokens à rotation, autorisation par rôle, pagination, et réponses enveloppées
+    de façon homogène.
+
+
+    Toutes les réponses suivent une enveloppe commune :
+
+    - succès : `{ "succes": true, "donnees": ..., "meta": {pagination} }`
+
+    - erreur : `{ "succes": false, "erreur": { "code", "message", "details" } }`
+
+
+    Les identifiants publics exposés dans le champ JSON `id` sont des UUID.
+  version: 1.0.0
+  contact:
+    name: Projet API Bibliothèque
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Environnement de développement local
+
+tags:
+  - name: Authentification
+    description: Inscription, connexion, rafraîchissement et déconnexion (JWT).
+  - name: Profil
+    description: Profil personnel de l'utilisateur authentifié (« moi »).
+  - name: Utilisateurs
+    description: Gestion des comptes (réservée aux administrateurs).
+  - name: Auteurs
+    description: Catalogue des auteurs (lecture publique, écriture biblio/admin).
+  - name: Catégories
+    description: Catégories thématiques (lecture publique, écriture biblio/admin).
+  - name: Livres
+    description: Catalogue des ouvrages (lecture publique, écriture biblio/admin).
+  - name: Emprunts
+    description: Emprunts et retours de livres.
+  - name: Observabilité
+    description: Sondes de santé et métriques Prometheus.
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------------------
+  # Authentification
+  # ---------------------------------------------------------------------------
+  /api/v1/auth/inscription:
+    post:
+      tags: [Authentification]
+      summary: Inscrire un nouveau membre
+      description: Crée un compte avec le rôle « membre » (forcé). Route publique.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InscriptionEntree'
+      responses:
+        '201':
+          description: Compte créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseUtilisateur'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+        '429':
+          $ref: '#/components/responses/Erreur429'
+
+  /api/v1/auth/connexion:
+    post:
+      tags: [Authentification]
+      summary: Se connecter
+      description: Vérifie les identifiants et renvoie le profil et une paire de jetons.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnexionEntree'
+      responses:
+        '200':
+          description: Connexion réussie.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseConnexionEnveloppe'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+        '429':
+          $ref: '#/components/responses/Erreur429'
+
+  /api/v1/auth/rafraichir:
+    post:
+      tags: [Authentification]
+      summary: Rafraîchir les jetons
+      description: >
+        Échange un refresh token valide contre une nouvelle paire de jetons.
+        L'ancien refresh token est révoqué (rotation).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RafraichissementEntree'
+      responses:
+        '200':
+          description: Nouvelle paire de jetons.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponsePaireDeJetons'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+
+  /api/v1/auth/deconnexion:
+    post:
+      tags: [Authentification]
+      summary: Se déconnecter
+      description: Révoque le refresh token fourni.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RafraichissementEntree'
+      responses:
+        '204':
+          description: Déconnexion effectuée (aucun corps).
+        '400':
+          $ref: '#/components/responses/Erreur400'
+
+  # ---------------------------------------------------------------------------
+  # Profil (« moi »)
+  # ---------------------------------------------------------------------------
+  /api/v1/moi:
+    get:
+      tags: [Profil]
+      summary: Consulter mon profil
+      responses:
+        '200':
+          description: Profil de l'utilisateur authentifié.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseUtilisateur'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+    patch:
+      tags: [Profil]
+      summary: Modifier mon profil
+      description: Modifie son propre nom/prénom. Les champs role et actif sont ignorés.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifierProfilEntree'
+      responses:
+        '200':
+          description: Profil mis à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseUtilisateur'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+
+  /api/v1/moi/emprunts:
+    get:
+      tags: [Profil]
+      summary: Lister mes emprunts
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Taille'
+        - $ref: '#/components/parameters/Ordre'
+        - name: tri
+          in: query
+          schema:
+            type: string
+            enum: [date_emprunt, date_retour, statut]
+            default: date_emprunt
+        - name: statut
+          in: query
+          schema:
+            $ref: '#/components/schemas/StatutEmprunt'
+      responses:
+        '200':
+          description: Page d'emprunts de l'utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseListeEmprunts'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+
+  /api/v1/moi/statistiques:
+    get:
+      tags: [Profil]
+      summary: Mes statistiques d'emprunt
+      responses:
+        '200':
+          description: Indicateurs agrégés.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseStatistiques'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+
+  # ---------------------------------------------------------------------------
+  # Utilisateurs (admin)
+  # ---------------------------------------------------------------------------
+  /api/v1/utilisateurs:
+    get:
+      tags: [Utilisateurs]
+      summary: Lister les utilisateurs
+      description: Réservé aux administrateurs.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Taille'
+        - $ref: '#/components/parameters/Ordre'
+        - $ref: '#/components/parameters/Recherche'
+        - name: tri
+          in: query
+          schema:
+            type: string
+            enum: [nom, email, role, date]
+            default: date
+        - name: role
+          in: query
+          schema:
+            $ref: '#/components/schemas/Role'
+      responses:
+        '200':
+          description: Page d'utilisateurs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseListeUtilisateurs'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+    post:
+      tags: [Utilisateurs]
+      summary: Créer un utilisateur
+      description: Réservé aux administrateurs. Permet de fixer explicitement le rôle.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreerUtilisateurEntree'
+      responses:
+        '201':
+          description: Utilisateur créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseUtilisateur'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+
+  /api/v1/utilisateurs/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdentifiantUUID'
+    get:
+      tags: [Utilisateurs]
+      summary: Consulter un utilisateur
+      responses:
+        '200':
+          description: Utilisateur.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseUtilisateur'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+    put:
+      tags: [Utilisateurs]
+      summary: Remplacer un utilisateur (nom/prénom)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MettreAJourProfilEntree'
+      responses:
+        '200':
+          description: Utilisateur mis à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseUtilisateur'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+    patch:
+      tags: [Utilisateurs]
+      summary: Modifier un utilisateur (partiel)
+      description: Un administrateur peut aussi modifier le rôle et l'état actif.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifierUtilisateurEntree'
+      responses:
+        '200':
+          description: Utilisateur mis à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseUtilisateur'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+    delete:
+      tags: [Utilisateurs]
+      summary: Supprimer un utilisateur
+      description: Suppression logique par défaut ; physique avec ?definitif=true (admin).
+      parameters:
+        - $ref: '#/components/parameters/Definitif'
+      responses:
+        '204':
+          description: Utilisateur supprimé (aucun corps).
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+
+  # ---------------------------------------------------------------------------
+  # Auteurs
+  # ---------------------------------------------------------------------------
+  /api/v1/auteurs:
+    get:
+      tags: [Auteurs]
+      summary: Lister les auteurs
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Taille'
+        - $ref: '#/components/parameters/Ordre'
+        - $ref: '#/components/parameters/Recherche'
+        - name: tri
+          in: query
+          schema:
+            type: string
+            enum: [nom, date_naissance, date]
+            default: nom
+        - name: nationalite
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Page d'auteurs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseListeAuteurs'
+    post:
+      tags: [Auteurs]
+      summary: Créer un auteur
+      description: Réservé aux bibliothécaires et administrateurs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreerAuteurEntree'
+      responses:
+        '201':
+          description: Auteur créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseAuteur'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+
+  /api/v1/auteurs/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdentifiantUUID'
+    get:
+      tags: [Auteurs]
+      summary: Consulter un auteur
+      security: []
+      responses:
+        '200':
+          description: Auteur.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseAuteur'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+    put:
+      tags: [Auteurs]
+      summary: Remplacer un auteur
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MettreAJourAuteurEntree'
+      responses:
+        '200':
+          description: Auteur mis à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseAuteur'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+    patch:
+      tags: [Auteurs]
+      summary: Modifier un auteur (partiel)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifierAuteurEntree'
+      responses:
+        '200':
+          description: Auteur mis à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseAuteur'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+    delete:
+      tags: [Auteurs]
+      summary: Supprimer un auteur
+      description: Refusée (409) si des livres référencent l'auteur.
+      responses:
+        '204':
+          description: Auteur supprimé (aucun corps).
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+
+  # ---------------------------------------------------------------------------
+  # Catégories
+  # ---------------------------------------------------------------------------
+  /api/v1/categories:
+    get:
+      tags: [Catégories]
+      summary: Lister les catégories
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Taille'
+        - $ref: '#/components/parameters/Ordre'
+        - $ref: '#/components/parameters/Recherche'
+        - name: tri
+          in: query
+          schema:
+            type: string
+            enum: [nom, date]
+            default: nom
+      responses:
+        '200':
+          description: Page de catégories.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseListeCategories'
+    post:
+      tags: [Catégories]
+      summary: Créer une catégorie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreerCategorieEntree'
+      responses:
+        '201':
+          description: Catégorie créée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseCategorie'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+
+  /api/v1/categories/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdentifiantUUID'
+    get:
+      tags: [Catégories]
+      summary: Consulter une catégorie
+      security: []
+      responses:
+        '200':
+          description: Catégorie.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseCategorie'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+    put:
+      tags: [Catégories]
+      summary: Remplacer une catégorie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MettreAJourCategorieEntree'
+      responses:
+        '200':
+          description: Catégorie mise à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseCategorie'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+    patch:
+      tags: [Catégories]
+      summary: Modifier une catégorie (partiel)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifierCategorieEntree'
+      responses:
+        '200':
+          description: Catégorie mise à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseCategorie'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+    delete:
+      tags: [Catégories]
+      summary: Supprimer une catégorie
+      description: Refusée (409) si des livres appartiennent à la catégorie.
+      responses:
+        '204':
+          description: Catégorie supprimée (aucun corps).
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+
+  # ---------------------------------------------------------------------------
+  # Livres
+  # ---------------------------------------------------------------------------
+  /api/v1/livres:
+    get:
+      tags: [Livres]
+      summary: Lister les livres
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Taille'
+        - $ref: '#/components/parameters/Ordre'
+        - $ref: '#/components/parameters/Recherche'
+        - name: tri
+          in: query
+          schema:
+            type: string
+            enum: [titre, annee, prix, date]
+            default: titre
+        - name: categorie
+          in: query
+          description: UUID d'une catégorie.
+          schema:
+            type: string
+            format: uuid
+        - name: auteur
+          in: query
+          description: UUID d'un auteur.
+          schema:
+            type: string
+            format: uuid
+        - name: disponible
+          in: query
+          description: Ne renvoyer que les livres disponibles si « true ».
+          schema:
+            type: string
+            enum: ['true']
+      responses:
+        '200':
+          description: Page de livres.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseListeLivres'
+    post:
+      tags: [Livres]
+      summary: Créer un livre
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreerLivreEntree'
+      responses:
+        '201':
+          description: Livre créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseLivre'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+
+  /api/v1/livres/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdentifiantUUID'
+    get:
+      tags: [Livres]
+      summary: Consulter un livre
+      security: []
+      responses:
+        '200':
+          description: Livre (enrichi de l'auteur et de la catégorie).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseLivre'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+    put:
+      tags: [Livres]
+      summary: Remplacer un livre
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MettreAJourLivreEntree'
+      responses:
+        '200':
+          description: Livre mis à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseLivre'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+    patch:
+      tags: [Livres]
+      summary: Modifier un livre (partiel)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModifierLivreEntree'
+      responses:
+        '200':
+          description: Livre mis à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseLivre'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+    delete:
+      tags: [Livres]
+      summary: Supprimer un livre
+      description: >
+        Suppression logique par défaut (biblio/admin). Avec ?definitif=true,
+        suppression physique réservée aux administrateurs ; refusée (409) si des
+        emprunts référencent le livre.
+      parameters:
+        - $ref: '#/components/parameters/Definitif'
+      responses:
+        '204':
+          description: Livre supprimé (aucun corps).
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+
+  # ---------------------------------------------------------------------------
+  # Emprunts
+  # ---------------------------------------------------------------------------
+  /api/v1/emprunts:
+    get:
+      tags: [Emprunts]
+      summary: Lister tous les emprunts
+      description: Réservé aux bibliothécaires et administrateurs.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Taille'
+        - $ref: '#/components/parameters/Ordre'
+        - name: tri
+          in: query
+          schema:
+            type: string
+            enum: [date_emprunt, date_retour, statut]
+            default: date_emprunt
+        - name: statut
+          in: query
+          schema:
+            $ref: '#/components/schemas/StatutEmprunt'
+      responses:
+        '200':
+          description: Page d'emprunts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseListeEmprunts'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+    post:
+      tags: [Emprunts]
+      summary: Emprunter un livre
+      description: >
+        Un membre emprunte pour lui-même. Un bibliothécaire/admin peut préciser
+        « utilisateur_id » pour emprunter au nom d'un membre.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmprunterEntree'
+      responses:
+        '201':
+          description: Emprunt créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseEmprunt'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+        '422':
+          $ref: '#/components/responses/Erreur422'
+
+  /api/v1/emprunts/{id}/retour:
+    parameters:
+      - $ref: '#/components/parameters/IdentifiantUUID'
+    post:
+      tags: [Emprunts]
+      summary: Rendre un livre
+      description: Enregistre le retour et calcule la pénalité éventuelle.
+      responses:
+        '200':
+          description: Emprunt clôturé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseEmprunt'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+        '409':
+          $ref: '#/components/responses/Erreur409'
+
+  /api/v1/emprunts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdentifiantUUID'
+    get:
+      tags: [Emprunts]
+      summary: Consulter un emprunt
+      description: Réservé aux bibliothécaires et administrateurs.
+      responses:
+        '200':
+          description: Emprunt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReponseEmprunt'
+        '400':
+          $ref: '#/components/responses/Erreur400'
+        '401':
+          $ref: '#/components/responses/Erreur401'
+        '403':
+          $ref: '#/components/responses/Erreur403'
+        '404':
+          $ref: '#/components/responses/Erreur404'
+
+  # ---------------------------------------------------------------------------
+  # Observabilité
+  # ---------------------------------------------------------------------------
+  /health:
+    get:
+      tags: [Observabilité]
+      summary: Sonde de liveness
+      security: []
+      responses:
+        '200':
+          description: Le processus est vivant.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  succes:
+                    type: boolean
+                    example: true
+                  donnees:
+                    type: object
+                    properties:
+                      statut:
+                        type: string
+                        example: ok
+                      version:
+                        type: string
+                        example: 1.0.0
+                      duree_fonctionnement:
+                        type: string
+                        example: 1h2m3s
+
+  /ready:
+    get:
+      tags: [Observabilité]
+      summary: Sonde de readiness
+      description: Vérifie que la base de données répond.
+      security: []
+      responses:
+        '200':
+          description: Le service est prêt.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  succes:
+                    type: boolean
+                    example: true
+                  donnees:
+                    type: object
+                    properties:
+                      statut:
+                        type: string
+                        example: pret
+                      base_de_donnees:
+                        type: string
+                        example: ok
+        '503':
+          $ref: '#/components/responses/Erreur503'
+
+  /metrics:
+    get:
+      tags: [Observabilité]
+      summary: Métriques Prometheus
+      security: []
+      responses:
+        '200':
+          description: Métriques au format texte Prometheus.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+# =============================================================================
+# Composants réutilisables
+# =============================================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Jeton d'accès JWT à placer dans l'en-tête « Authorization: Bearer <jeton> ».
+        Obtenu via /api/v1/auth/connexion, renouvelable via /api/v1/auth/rafraichir.
+
+  parameters:
+    IdentifiantUUID:
+      name: id
+      in: path
+      required: true
+      description: Identifiant public (UUID) de la ressource.
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      description: Numéro de page (≥ 1).
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Taille:
+      name: taille
+      in: query
+      description: Nombre d'éléments par page (max 100).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Ordre:
+      name: ordre
+      in: query
+      description: Sens du tri.
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: asc
+    Recherche:
+      name: recherche
+      in: query
+      description: Terme de recherche simple (LIKE).
+      schema:
+        type: string
+    Definitif:
+      name: definitif
+      in: query
+      description: Si « true », suppression physique définitive (réservée aux administrateurs).
+      schema:
+        type: string
+        enum: ['true']
+
+  responses:
+    Erreur400:
+      description: Requête invalide (JSON illisible, champ non autorisé, identifiant mal formé).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EnveloppeErreur'
+          example:
+            succes: false
+            erreur:
+              code: REQUETE_INVALIDE
+              message: Le corps de la requête n'est pas un JSON valide.
+    Erreur401:
+      description: Non authentifié (jeton absent, invalide ou expiré ; identifiants erronés).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EnveloppeErreur'
+          example:
+            succes: false
+            erreur:
+              code: NON_AUTHENTIFIE
+              message: Jeton d'accès invalide ou expiré.
+    Erreur403:
+      description: Interdit (rôle insuffisant ou compte désactivé).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EnveloppeErreur'
+          example:
+            succes: false
+            erreur:
+              code: INTERDIT
+              message: Vous n'avez pas les droits nécessaires pour cette action.
+    Erreur404:
+      description: Ressource introuvable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EnveloppeErreur'
+          example:
+            succes: false
+            erreur:
+              code: NON_TROUVE
+              message: Ressource introuvable.
+    Erreur409:
+      description: Conflit (doublon, règle métier bloquante, contrainte de clé étrangère).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EnveloppeErreur'
+          example:
+            succes: false
+            erreur:
+              code: CONFLIT
+              message: Cette adresse e-mail est déjà utilisée.
+    Erreur422:
+      description: Erreur de validation (champs invalides).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EnveloppeErreur'
+          example:
+            succes: false
+            erreur:
+              code: VALIDATION
+              message: Un ou plusieurs champs sont invalides.
+              details:
+                email: adresse e-mail invalide
+                mot_de_passe: doit contenir au moins 8 caractères
+    Erreur429:
+      description: Trop de requêtes (limite de débit atteinte).
+      headers:
+        Retry-After:
+          description: Nombre de secondes à attendre avant de réessayer.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EnveloppeErreur'
+          example:
+            succes: false
+            erreur:
+              code: TROP_DE_REQUETES
+              message: Trop de requêtes. Veuillez réessayer dans quelques instants.
+    Erreur500:
+      description: Erreur interne (cause journalisée côté serveur, non exposée).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EnveloppeErreur'
+          example:
+            succes: false
+            erreur:
+              code: ERREUR_INTERNE
+              message: Une erreur interne est survenue. Veuillez réessayer plus tard.
+    Erreur503:
+      description: Service indisponible (dépendance en panne, ex. base injoignable).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EnveloppeErreur'
+          example:
+            succes: false
+            erreur:
+              code: SERVICE_INDISPONIBLE
+              message: Base de données indisponible.
+
+  schemas:
+    # --- Énumérations ---
+    Role:
+      type: string
+      enum: [admin, bibliothecaire, membre]
+      description: Rôle applicatif de l'utilisateur.
+    StatutEmprunt:
+      type: string
+      enum: [en_cours, rendu, en_retard]
+      description: État d'un emprunt.
+
+    # --- Métadonnées et erreurs ---
+    MetaPagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        taille_par_page:
+          type: integer
+          example: 20
+        total_elements:
+          type: integer
+          example: 28
+        total_pages:
+          type: integer
+          example: 2
+    EnveloppeErreur:
+      type: object
+      required: [succes, erreur]
+      properties:
+        succes:
+          type: boolean
+          example: false
+        erreur:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - REQUETE_INVALIDE
+                - VALIDATION
+                - NON_AUTHENTIFIE
+                - INTERDIT
+                - NON_TROUVE
+                - CONFLIT
+                - TROP_DE_REQUETES
+                - ERREUR_INTERNE
+                - SERVICE_INDISPONIBLE
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties:
+                type: string
+              description: Détail des champs fautifs (erreurs de validation uniquement).
+
+    # --- Entités ---
+    Utilisateur:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identifiant public.
+        email:
+          type: string
+          format: email
+        nom:
+          type: string
+        prenom:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        actif:
+          type: boolean
+        cree_le:
+          type: string
+          format: date-time
+        modifie_le:
+          type: string
+          format: date-time
+        supprime_le:
+          type: string
+          format: date-time
+          nullable: true
+    PaireDeJetons:
+      type: object
+      properties:
+        jeton_acces:
+          type: string
+          description: JWT à placer dans l'en-tête Authorization.
+        jeton_rafraichissement:
+          type: string
+          description: Secret opaque de renouvellement (longue durée).
+        type_jeton:
+          type: string
+          example: Bearer
+        expire_le:
+          type: string
+          format: date-time
+          description: Expiration du jeton d'accès.
+    ReponseConnexion:
+      type: object
+      properties:
+        utilisateur:
+          $ref: '#/components/schemas/Utilisateur'
+        jetons:
+          $ref: '#/components/schemas/PaireDeJetons'
+    Auteur:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        nom:
+          type: string
+        prenom:
+          type: string
+        nationalite:
+          type: string
+        date_naissance:
+          type: string
+          format: date
+          nullable: true
+          description: Format AAAA-MM-JJ.
+        biographie:
+          type: string
+        cree_le:
+          type: string
+          format: date-time
+        modifie_le:
+          type: string
+          format: date-time
+    Categorie:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        nom:
+          type: string
+        description:
+          type: string
+        cree_le:
+          type: string
+          format: date-time
+        modifie_le:
+          type: string
+          format: date-time
+    Livre:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        titre:
+          type: string
+        isbn:
+          type: string
+          description: ISBN-13 canonique (13 chiffres).
+        annee_publication:
+          type: integer
+        nombre_exemplaires:
+          type: integer
+        exemplaires_disponibles:
+          type: integer
+        resume:
+          type: string
+        prix:
+          type: number
+          format: double
+        langue:
+          type: string
+        auteur_id:
+          type: string
+          format: uuid
+        auteur:
+          type: string
+          description: Nom complet de l'auteur (lecture seule, jointure).
+        categorie_id:
+          type: string
+          format: uuid
+        categorie:
+          type: string
+          description: Nom de la catégorie (lecture seule, jointure).
+        disponible:
+          type: boolean
+        cree_le:
+          type: string
+          format: date-time
+        modifie_le:
+          type: string
+          format: date-time
+        supprime_le:
+          type: string
+          format: date-time
+          nullable: true
+    Emprunt:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        date_emprunt:
+          type: string
+          format: date-time
+        date_retour_prevue:
+          type: string
+          format: date-time
+        date_retour_effective:
+          type: string
+          format: date-time
+          nullable: true
+        statut:
+          $ref: '#/components/schemas/StatutEmprunt'
+        penalite:
+          type: number
+          format: double
+        utilisateur_id:
+          type: string
+          format: uuid
+        utilisateur:
+          type: string
+          description: Nom complet de l'emprunteur (lecture seule).
+        livre_id:
+          type: string
+          format: uuid
+        livre:
+          type: string
+          description: Titre du livre (lecture seule).
+        cree_le:
+          type: string
+          format: date-time
+        modifie_le:
+          type: string
+          format: date-time
+    StatistiquesUtilisateur:
+      type: object
+      properties:
+        nb_total:
+          type: integer
+        nb_en_cours:
+          type: integer
+        nb_en_retard:
+          type: integer
+        total_penalites:
+          type: number
+          format: double
+
+    # --- Structures d'entrée ---
+    InscriptionEntree:
+      type: object
+      required: [email, mot_de_passe, nom, prenom]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        mot_de_passe:
+          type: string
+          minLength: 8
+          maxLength: 72
+        nom:
+          type: string
+          maxLength: 100
+        prenom:
+          type: string
+          maxLength: 100
+    ConnexionEntree:
+      type: object
+      required: [email, mot_de_passe]
+      properties:
+        email:
+          type: string
+          format: email
+        mot_de_passe:
+          type: string
+    RafraichissementEntree:
+      type: object
+      required: [jeton_rafraichissement]
+      properties:
+        jeton_rafraichissement:
+          type: string
+    CreerUtilisateurEntree:
+      type: object
+      required: [email, mot_de_passe, nom, prenom, role]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        mot_de_passe:
+          type: string
+          minLength: 8
+          maxLength: 72
+        nom:
+          type: string
+          maxLength: 100
+        prenom:
+          type: string
+          maxLength: 100
+        role:
+          $ref: '#/components/schemas/Role'
+    MettreAJourProfilEntree:
+      type: object
+      required: [nom, prenom]
+      properties:
+        nom:
+          type: string
+          maxLength: 100
+        prenom:
+          type: string
+          maxLength: 100
+    ModifierProfilEntree:
+      type: object
+      properties:
+        nom:
+          type: string
+          maxLength: 100
+        prenom:
+          type: string
+          maxLength: 100
+      description: Mise à jour partielle du profil personnel (role/actif ignorés).
+    ModifierUtilisateurEntree:
+      type: object
+      properties:
+        nom:
+          type: string
+          maxLength: 100
+        prenom:
+          type: string
+          maxLength: 100
+        role:
+          $ref: '#/components/schemas/Role'
+        actif:
+          type: boolean
+      description: >
+        Mise à jour partielle. Les champs role et actif ne sont appliqués que par
+        un administrateur.
+    CreerAuteurEntree:
+      type: object
+      required: [nom]
+      properties:
+        nom:
+          type: string
+          maxLength: 100
+        prenom:
+          type: string
+          maxLength: 100
+        nationalite:
+          type: string
+          maxLength: 100
+        date_naissance:
+          type: string
+          format: date
+          nullable: true
+        biographie:
+          type: string
+    MettreAJourAuteurEntree:
+      type: object
+      required: [nom]
+      properties:
+        nom:
+          type: string
+          maxLength: 100
+        prenom:
+          type: string
+          maxLength: 100
+        nationalite:
+          type: string
+          maxLength: 100
+        date_naissance:
+          type: string
+          format: date
+          nullable: true
+        biographie:
+          type: string
+    ModifierAuteurEntree:
+      type: object
+      properties:
+        nom:
+          type: string
+          maxLength: 100
+        prenom:
+          type: string
+          maxLength: 100
+        nationalite:
+          type: string
+          maxLength: 100
+        date_naissance:
+          type: string
+          format: date
+          nullable: true
+        biographie:
+          type: string
+    CreerCategorieEntree:
+      type: object
+      required: [nom]
+      properties:
+        nom:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+    MettreAJourCategorieEntree:
+      type: object
+      required: [nom]
+      properties:
+        nom:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+    ModifierCategorieEntree:
+      type: object
+      properties:
+        nom:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+    CreerLivreEntree:
+      type: object
+      required: [titre, isbn, auteur_id, categorie_id, annee_publication, nombre_exemplaires]
+      properties:
+        titre:
+          type: string
+          maxLength: 255
+        isbn:
+          type: string
+          description: ISBN-13 (clé de contrôle vérifiée).
+        auteur_id:
+          type: string
+          format: uuid
+        categorie_id:
+          type: string
+          format: uuid
+        annee_publication:
+          type: integer
+          minimum: 1400
+          maximum: 2200
+        nombre_exemplaires:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        resume:
+          type: string
+        prix:
+          type: number
+          format: double
+          minimum: 0
+        langue:
+          type: string
+          maxLength: 50
+    MettreAJourLivreEntree:
+      type: object
+      required: [titre, isbn, auteur_id, categorie_id, annee_publication, nombre_exemplaires]
+      properties:
+        titre:
+          type: string
+          maxLength: 255
+        isbn:
+          type: string
+        auteur_id:
+          type: string
+          format: uuid
+        categorie_id:
+          type: string
+          format: uuid
+        annee_publication:
+          type: integer
+          minimum: 1400
+          maximum: 2200
+        nombre_exemplaires:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        resume:
+          type: string
+        prix:
+          type: number
+          format: double
+          minimum: 0
+        langue:
+          type: string
+          maxLength: 50
+    ModifierLivreEntree:
+      type: object
+      properties:
+        titre:
+          type: string
+          maxLength: 255
+        isbn:
+          type: string
+        auteur_id:
+          type: string
+          format: uuid
+        categorie_id:
+          type: string
+          format: uuid
+        annee_publication:
+          type: integer
+          minimum: 1400
+          maximum: 2200
+        nombre_exemplaires:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        resume:
+          type: string
+        prix:
+          type: number
+          format: double
+          minimum: 0
+        langue:
+          type: string
+          maxLength: 50
+    EmprunterEntree:
+      type: object
+      required: [livre_id]
+      properties:
+        livre_id:
+          type: string
+          format: uuid
+        duree_jours:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 14
+        utilisateur_id:
+          type: string
+          format: uuid
+          description: Réservé aux bibliothécaires/admins (emprunt au nom d'un membre).
+
+    # --- Enveloppes de réponse (succès) ---
+    ReponseUtilisateur:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          $ref: '#/components/schemas/Utilisateur'
+    ReponseConnexionEnveloppe:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          $ref: '#/components/schemas/ReponseConnexion'
+    ReponsePaireDeJetons:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          $ref: '#/components/schemas/PaireDeJetons'
+    ReponseAuteur:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          $ref: '#/components/schemas/Auteur'
+    ReponseCategorie:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          $ref: '#/components/schemas/Categorie'
+    ReponseLivre:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          $ref: '#/components/schemas/Livre'
+    ReponseEmprunt:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          $ref: '#/components/schemas/Emprunt'
+    ReponseStatistiques:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          $ref: '#/components/schemas/StatistiquesUtilisateur'
+    ReponseListeUtilisateurs:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          type: array
+          items:
+            $ref: '#/components/schemas/Utilisateur'
+        meta:
+          $ref: '#/components/schemas/MetaPagination'
+    ReponseListeAuteurs:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          type: array
+          items:
+            $ref: '#/components/schemas/Auteur'
+        meta:
+          $ref: '#/components/schemas/MetaPagination'
+    ReponseListeCategories:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          type: array
+          items:
+            $ref: '#/components/schemas/Categorie'
+        meta:
+          $ref: '#/components/schemas/MetaPagination'
+    ReponseListeLivres:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          type: array
+          items:
+            $ref: '#/components/schemas/Livre'
+        meta:
+          $ref: '#/components/schemas/MetaPagination'
+    ReponseListeEmprunts:
+      type: object
+      properties:
+        succes:
+          type: boolean
+          example: true
+        donnees:
+          type: array
+          items:
+            $ref: '#/components/schemas/Emprunt'
+        meta:
+          $ref: '#/components/schemas/MetaPagination'
