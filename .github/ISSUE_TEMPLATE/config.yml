@@ -1,0 +1,19 @@
+# =============================================================================
+# .github/ISSUE_TEMPLATE/config.yml — Configuration des modèles d'issues
+# -----------------------------------------------------------------------------
+# blank_issues_enabled à `false` : oblige à passer par l'un des modèles
+# disponibles (rapport de bogue ou demande de fonctionnalité) plutôt que
+# d'ouvrir une issue vierge, afin de garder des tickets structurés et
+# exploitables.
+# =============================================================================
+blank_issues_enabled: false
+
+# Lien de contact optionnel, proposé à côté des modèles d'issues. Il suppose
+# que les Discussions GitHub sont activées sur le dépôt (Settings > Features
+# > Discussions) ; retirez ce bloc si ce n'est pas le cas.
+contact_links:
+  - name: Discussions et questions générales
+    url: https://github.com/exemple/api-bibliotheque/discussions
+    about: >-
+      Pour poser une question, demander de l'aide ou échanger avant d'ouvrir
+      un ticket.

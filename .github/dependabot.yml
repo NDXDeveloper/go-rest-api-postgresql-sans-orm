@@ -1,0 +1,53 @@
+# =============================================================================
+# .github/dependabot.yml — Mises à jour automatiques des dépendances
+# -----------------------------------------------------------------------------
+# Dependabot ouvre automatiquement une Pull Request lorsqu'une mise à jour
+# (notamment de sécurité) est disponible pour l'une de nos dépendances. On
+# surveille ici deux écosystèmes :
+#
+#   - « gomod »          : les dépendances Go déclarées dans go.mod / go.sum ;
+#   - « github-actions » : les actions utilisées par nos workflows CI.
+#
+# REMARQUE sur les labels : on n'ajoute PAS de labels personnalisés ici. Un label
+# doit exister au préalable sur le dépôt, sinon Dependabot refuse d'ouvrir la PR
+# (« The following labels could not be found... »). On laisse donc Dependabot
+# gérer ses labels par défaut. Pour ajouter les vôtres, créez-les d'abord dans
+# l'onglet « Issues > Labels » du dépôt, puis ajoutez une clé « labels: ».
+#
+# GROUPES : on regroupe les petites mises à jour (mineures et correctifs) en UNE
+# seule PR par écosystème, pour éviter de multiplier les Pull Requests. Les
+# montées de version MAJEURES restent, elles, dans des PR séparées (à relire cas
+# par cas, car elles peuvent introduire des ruptures de compatibilité).
+# =============================================================================
+version: 2
+updates:
+  # --- Dépendances Go (go.mod / go.sum) ---------------------------------------
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dependances-go:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # --- Actions utilisées dans les workflows GitHub (.github/workflows) --------
+  - package-ecosystem: "github-actions"
+    directory: "/.github/workflows"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      actions-github:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+      include: "scope"

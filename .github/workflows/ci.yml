@@ -1,0 +1,191 @@
+# =============================================================================
+# .github/workflows/ci.yml — Intégration continue
+# -----------------------------------------------------------------------------
+# Ce workflow s'exécute à chaque push et à chaque Pull Request ciblant la
+# branche « main ». Il comprend :
+#
+#   - un job « qualite » (obligatoire) : formatage, vet, lint, staticcheck,
+#     compilation et tests unitaires (avec détection des data races) ;
+#   - un job « integration » (optionnel) : démarre un service PostgreSQL 18,
+#     charge le schéma SQL du projet (hors sql/cron/09_cron.sql, qui exige
+#     l'extension pg_cron — voir les commentaires du job pour le détail), puis
+#     exécute les tests marqués par le tag de compilation « integration »
+#     (voir internal/repository/integration_test.go). Pour désactiver
+#     complètement ce second job, il suffit de supprimer la section
+#     « integration: » ci-dessous.
+# =============================================================================
+name: Intégration continue
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Annule une exécution précédente encore en cours pour la même branche/PR dès
+# qu'un nouveau push arrive, pour ne pas gaspiller de minutes CI sur du code
+# déjà dépassé.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Permission minimale nécessaire : ce workflow ne fait que lire le dépôt.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job obligatoire : formatage, analyse statique, compilation, tests.
+  # ---------------------------------------------------------------------------
+  qualite:
+    name: Contrôle qualité
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code source
+        uses: actions/checkout@v7
+
+      - name: Installer Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Vérifier le formatage (gofmt)
+        run: |
+          fichiers_non_formates="$(gofmt -l .)"
+          if [ -n "$fichiers_non_formates" ]; then
+            echo "Les fichiers suivants ne sont pas formatés avec gofmt :"
+            echo "$fichiers_non_formates"
+            echo "Lancez « make formater » (ou « gofmt -w . ») puis recommittez."
+            exit 1
+          fi
+          echo "Tous les fichiers sont correctement formatés."
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint (v2)
+        # On COMPILE golangci-lint v2 avec la toolchain Go du job (Go 1.25), plutôt
+        # que de télécharger un binaire précompilé. C'est indispensable : un binaire
+        # golangci-lint bâti avec une version de Go plus ANCIENNE refuse d'analyser
+        # un module ciblant Go 1.25, avec l'erreur « the Go language version used to
+        # build golangci-lint is lower than the targeted Go version ». En le compilant
+        # ici avec la même toolchain que le projet, on garantit la compatibilité.
+        # (golangci-lint v1 ne supporte pas Go 1.25 : il FAUT la v2.)
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          "$(go env GOPATH)/bin/golangci-lint" run ./...
+
+      - name: staticcheck
+        # « go run » compile staticcheck avec la toolchain du job (Go 1.25), ce qui
+        # garantit la compatibilité (comme pour golangci-lint). Version épinglée
+        # pour la reproductibilité.
+        run: go run honnef.co/go/tools/cmd/staticcheck@2025.1 ./...
+
+      - name: Compiler
+        run: go build ./...
+
+      - name: Tests
+        run: go test -race -count=1 ./...
+
+  # ---------------------------------------------------------------------------
+  # Job optionnel : tests d'intégration nécessitant une vraie base PostgreSQL.
+  # Ne démarre que si le job « qualite » a réussi, pour ne pas gaspiller de
+  # ressources sur une base à mettre en place si l'essentiel échoue déjà.
+  # ---------------------------------------------------------------------------
+  integration:
+    name: Tests d'intégration (PostgreSQL)
+    needs: qualite
+    runs-on: ubuntu-latest
+    services:
+      # Service PostgreSQL 18, même version majeure qu'en développement et en
+      # production (voir docker-compose.yml). Les identifiants ci-dessous sont
+      # des valeurs de test, sans rapport avec un quelconque environnement réel.
+      #
+      # REMARQUE IMPORTANTE — pg_cron : ceci est l'image PostgreSQL STANDARD
+      # (postgres:18), qui n'embarque PAS pg_cron, contrairement à l'image
+      # custom utilisée par docker-compose.yml (docker/postgres/Dockerfile).
+      # pg_cron doit être PRÉCHARGÉE via shared_preload_libraries, ce qui exige
+      # de personnaliser la ligne de commande du serveur ; ce n'est pas possible
+      # avec un simple conteneur « services: » de GitHub Actions. On charge donc
+      # le schéma SANS sql/cron/09_cron.sql (voir l'étape dédiée ci-dessous) :
+      # cela n'affecte pas les tests d'intégration, qui ne dépendent d'aucune
+      # tâche planifiée. Pour tester pg_cron, utilisez la pile Docker Compose
+      # locale : « docker compose up » (elle construit l'image custom avec
+      # pg_cron préchargée et exécute sql/cron/09_cron.sql automatiquement).
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_motdepasse_root_uniquement_pour_les_tests_automatises
+          POSTGRES_DB: bibliotheque
+        ports:
+          - 5432:5432
+        # pg_isready : la base accepte-t-elle les connexions ? On attend que le
+        # serveur soit prêt avant de lancer les étapes suivantes (chargement du
+        # schéma, tests).
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+          --health-start-period=40s
+    # Variables de connexion cohérentes avec internal/config (voir .env.example) :
+    # l'application et les scripts de chargement du schéma s'y connectent via
+    # 127.0.0.1, le service étant exposé sur le port hôte 5432. BDD_MOT_DE_PASSE
+    # correspond au mot de passe de DÉVELOPPEMENT codé en dur dans
+    # sql/schema/01_roles.sql pour le rôle applicatif « app_bibliotheque »
+    # (« changez_moi_app ») : en local/production, docker/postgres/initdb/
+    # 99_mot_de_passe_app.sh le remplace par un vrai secret, mais cette étape
+    # n'est pas rejouée ici (on charge les scripts SQL bruts), donc la valeur
+    # par défaut du script reste active.
+    env:
+      BDD_HOTE: 127.0.0.1
+      BDD_PORT: 5432
+      BDD_NOM: bibliotheque
+      BDD_UTILISATEUR: app_bibliotheque
+      BDD_MOT_DE_PASSE: changez_moi_app
+      BDD_ROOT_MOT_DE_PASSE: ci_motdepasse_root_uniquement_pour_les_tests_automatises
+      JWT_SECRET: ci-secret-de-test-uniquement-32-caracteres-minimum
+    steps:
+      - name: Récupérer le code source
+        uses: actions/checkout@v7
+
+      - name: Installer Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Installer le client PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      # sql/cron/09_cron.sql est volontairement EXCLU de ce chargement : il crée
+      # l'extension pg_cron (CREATE EXTENSION pg_cron), indisponible sur l'image
+      # postgres:18 standard utilisée par ce job (voir la remarque du service
+      # ci-dessus). Les neuf autres scripts sont chargés DANS L'ORDRE, comme le
+      # fait docker-compose.yml, avec ON_ERROR_STOP=1 pour que la moindre erreur
+      # SQL fasse échouer l'étape (par défaut, psql continue après une erreur).
+      - name: Charger le schéma SQL (dans l'ordre des scripts sql/, hors pg_cron)
+        run: |
+          export PGPASSWORD="$BDD_ROOT_MOT_DE_PASSE"
+          for fichier in \
+            sql/extensions/00_extensions.sql \
+            sql/schema/01_roles.sql \
+            sql/schema/02_types.sql \
+            sql/schema/03_tables.sql \
+            sql/schema/04_index.sql \
+            sql/functions/05_fonctions.sql \
+            sql/views/06_vues.sql \
+            sql/procedures/07_procedures.sql \
+            sql/triggers/08_triggers.sql \
+            sql/data/10_seed.sql; do
+            echo "Chargement de $fichier..."
+            psql -v ON_ERROR_STOP=1 --host="$BDD_HOTE" --port="$BDD_PORT" \
+              --username=postgres --dbname="$BDD_NOM" -f "$fichier"
+          done
+
+      - name: Tests d'intégration
+        run: go test -tags=integration -race -count=1 ./...

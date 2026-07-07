@@ -1,0 +1,75 @@
+# =============================================================================
+# .golangci.yml — Configuration de golangci-lint (format v2)
+# -----------------------------------------------------------------------------
+# golangci-lint regroupe de nombreux analyseurs (« linters ») en un seul outil.
+# Cette configuration cible golangci-lint v2 (obligatoire pour analyser un
+# module Go 1.25 : les binaires v1 refusent une version Go plus récente que la
+# leur). Le workflow CI épingle une version v2. Lancement : « golangci-lint run ».
+# =============================================================================
+
+version: "2"
+
+run:
+  # Analyse aussi les fichiers de test.
+  tests: true
+
+linters:
+  # On part d'aucun linter et on active explicitement ceux que l'on veut :
+  # comportement stable et prévisible.
+  default: none
+  enable:
+    - errcheck # erreurs retournées mais non vérifiées
+    - govet # équivalent de « go vet »
+    - ineffassign # affectations sans effet
+    - staticcheck # analyse avancée (inclut gosimple et stylecheck)
+    - unused # code mort (variables/fonctions non utilisées)
+    - revive # style et bonnes pratiques (successeur de golint)
+    - bodyclose # http.Response.Body non fermé (fuite de ressources)
+    - gosec # problèmes de sécurité courants
+
+  settings:
+    errcheck:
+      # On IGNORE volontairement l'erreur de ces méthodes « Close » appelées en
+      # « defer » : pour un curseur (*sql.Rows), une connexion empruntée au pool
+      # (*sql.Conn) ou un fichier ouvert en lecture, l'échec de fermeture est sans
+      # conséquence exploitable (les vraies erreurs de lecture sont déjà remontées
+      # via Err() / le Scan). Les exclure ici évite un bruit inutile tout en
+      # gardant errcheck actif sur le reste du code.
+      exclude-functions:
+        - (*database/sql.Rows).Close
+        - (*database/sql.Conn).Close
+        - (*database/sql.DB).Close
+        - (*os.File).Close
+    gosec:
+      excludes:
+        - G104 # doublon avec errcheck (erreurs non vérifiées)
+    revive:
+      rules:
+        - name: exported # exige un commentaire sur les éléments exportés
+          disabled: false
+
+  exclusions:
+    generated: lax
+    rules:
+      # Dans les tests, on tolère quelques pratiques (erreurs ignorées volontairement).
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - bodyclose
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+# gofmt est géré par la section « formatters » en golangci-lint v2 (et non plus
+# comme un linter).
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
