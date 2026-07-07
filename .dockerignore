@@ -1,0 +1,36 @@
+# =============================================================================
+# .dockerignore — fichiers exclus du contexte de build Docker
+# -----------------------------------------------------------------------------
+# Tout ce qui est listé ici n'est PAS envoyé au démon Docker lors du build, ce
+# qui accélère la construction et évite d'inclure des fichiers inutiles ou
+# sensibles dans le contexte.
+# =============================================================================
+
+# Fichiers de secrets/config locale (JAMAIS dans l'image).
+.env
+*.env
+!.env.example
+
+# Métadonnées Git et éditeurs.
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Documentation et fichiers de développement (inutiles à la compilation).
+*.md
+docs/
+scripts/
+
+# Binaires et artefacts de build locaux.
+/api
+/bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Bases de données locales / dumps.
+*.sql.gz
+*.dump

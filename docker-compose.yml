@@ -1,0 +1,128 @@
+# =============================================================================
+# docker-compose.yml — Orchestration de la pile complète (API + PostgreSQL)
+# -----------------------------------------------------------------------------
+# Un seul « docker compose up » suffit à démarrer :
+#   1. PostgreSQL 18 (image étendue avec pg_cron), initialisée avec le schéma,
+#      les extensions, les fonctions, procédures, triggers, tâches pg_cron et un
+#      jeu de données de démonstration ;
+#   2. l'API Go, qui attend que la base soit SAINE avant de démarrer.
+#
+# La configuration provient du fichier .env (voir .env.example). Les valeurs par
+# défaut « ${VAR:-valeur} » permettent de démarrer même sans .env, mais on
+# DOIT définir de vrais secrets en production.
+#
+# NB : la clé « version » est facultative avec Docker Compose v2 (conservée pour
+# rester compatible avec l'ancien binaire docker-compose v1). Le nom de projet se
+# règle via COMPOSE_PROJECT_NAME dans .env.
+# =============================================================================
+version: "3.9"
+
+services:
+  # ---------------------------------------------------------------------------
+  # Service base de données : PostgreSQL 18 + pg_cron
+  # ---------------------------------------------------------------------------
+  postgres:
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+    container_name: bibliotheque_postgres
+    restart: unless-stopped
+    # PRÉCHARGEMENT de pg_cron (indispensable) et ciblage de la base « bibliotheque »
+    # pour les tâches planifiées. « -c » passe des paramètres au serveur.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_cron
+      - -c
+      - cron.database_name=bibliotheque
+    environment:
+      # Superutilisateur PostgreSQL (administration). À CHANGER en production.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${BDD_ROOT_MOT_DE_PASSE:-changez_moi_root}
+      # Base créée automatiquement par l'image.
+      POSTGRES_DB: ${BDD_NOM:-bibliotheque}
+      # Mot de passe du RÔLE APPLICATIF, appliqué par le script d'init 99_*.sh.
+      APP_DB_PASSWORD: ${BDD_MOT_DE_PASSE:-changez_moi_app}
+    ports:
+      # Expose PostgreSQL sur l'hôte (utile pour psql / un client SQL externe).
+      # En production, on retirerait cette exposition.
+      - "${BDD_PORT_HOTE:-5432}:5432"
+    volumes:
+      # Volume NOMMÉ pour PERSISTER les données entre les redémarrages.
+      # NB : depuis PostgreSQL 18, l'image officielle recommande de monter le
+      # volume sur « /var/lib/postgresql » (et NON « /var/lib/postgresql/data »
+      # comme avant) : les données sont alors rangées dans un sous-répertoire
+      # versionné, ce qui facilite les futures montées de version (pg_upgrade).
+      - donnees_postgres:/var/lib/postgresql
+      # Scripts d'initialisation, exécutés DANS L'ORDRE au premier démarrage
+      # (base vierge). L'ordre est garanti par les préfixes numériques.
+      - ./sql/extensions/00_extensions.sql:/docker-entrypoint-initdb.d/00_extensions.sql:ro
+      - ./sql/schema/01_roles.sql:/docker-entrypoint-initdb.d/01_roles.sql:ro
+      - ./sql/schema/02_types.sql:/docker-entrypoint-initdb.d/02_types.sql:ro
+      - ./sql/schema/03_tables.sql:/docker-entrypoint-initdb.d/03_tables.sql:ro
+      - ./sql/schema/04_index.sql:/docker-entrypoint-initdb.d/04_index.sql:ro
+      - ./sql/functions/05_fonctions.sql:/docker-entrypoint-initdb.d/05_fonctions.sql:ro
+      - ./sql/views/06_vues.sql:/docker-entrypoint-initdb.d/06_vues.sql:ro
+      - ./sql/procedures/07_procedures.sql:/docker-entrypoint-initdb.d/07_procedures.sql:ro
+      - ./sql/triggers/08_triggers.sql:/docker-entrypoint-initdb.d/08_triggers.sql:ro
+      - ./sql/cron/09_cron.sql:/docker-entrypoint-initdb.d/09_cron.sql:ro
+      - ./sql/data/10_seed.sql:/docker-entrypoint-initdb.d/10_seed.sql:ro
+      # Script shell final : applique le secret du rôle applicatif (voir le fichier).
+      - ./docker/postgres/initdb/99_mot_de_passe_app.sh:/docker-entrypoint-initdb.d/99_mot_de_passe_app.sh:ro
+    healthcheck:
+      # pg_isready : la base accepte-t-elle les connexions ? Ne devient « healthy »
+      # qu'une fois l'initialisation (tous les scripts) terminée.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${BDD_NOM:-bibliotheque}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+    networks:
+      - reseau_bibliotheque
+
+  # ---------------------------------------------------------------------------
+  # Service applicatif : l'API Go
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bibliotheque_api
+    restart: unless-stopped
+    # L'API ne démarre QUE lorsque PostgreSQL est « healthy » (schéma chargé).
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENVIRONNEMENT: ${APP_ENVIRONNEMENT:-developpement}
+      SERVEUR_ADRESSE: 0.0.0.0
+      SERVEUR_PORT: 8080
+      # L'API joint PostgreSQL par le NOM DE SERVICE « postgres » (DNS interne Docker).
+      BDD_HOTE: postgres
+      BDD_PORT: 5432
+      BDD_NOM: ${BDD_NOM:-bibliotheque}
+      BDD_UTILISATEUR: ${BDD_UTILISATEUR:-app_bibliotheque}
+      BDD_MOT_DE_PASSE: ${BDD_MOT_DE_PASSE:-changez_moi_app}
+      JWT_SECRET: ${JWT_SECRET:-changez_moi_secret_jwt_de_32_caracteres_minimum}
+      JWT_DUREE_ACCES: ${JWT_DUREE_ACCES:-15m}
+      JWT_DUREE_RAFRAICHISSEMENT: ${JWT_DUREE_RAFRAICHISSEMENT:-168h}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_NIVEAU: ${LOG_NIVEAU:-info}
+      CORS_ORIGINES_AUTORISEES: ${CORS_ORIGINES_AUTORISEES:-*}
+      RATE_LIMIT_PAR_SECONDE: ${RATE_LIMIT_PAR_SECONDE:-10}
+      RATE_LIMIT_RAFALE: ${RATE_LIMIT_RAFALE:-20}
+    ports:
+      - "${SERVEUR_PORT_HOTE:-8080}:8080"
+    networks:
+      - reseau_bibliotheque
+
+# Réseau dédié : isole la communication entre l'API et la base.
+networks:
+  reseau_bibliotheque:
+    driver: bridge
+
+# Volume nommé : les données PostgreSQL survivent à « docker compose down »
+# (mais pas à « docker compose down -v », qui supprime les volumes).
+volumes:
+  donnees_postgres:
+    driver: local

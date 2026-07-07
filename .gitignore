@@ -1,0 +1,44 @@
+# =============================================================================
+# .gitignore — Fichiers exclus du suivi Git
+# =============================================================================
+
+# --- Secrets et configuration locale (NE JAMAIS COMMITTER) -------------------
+.env
+*.env
+!.env.example
+
+# --- Binaires et artefacts de compilation ------------------------------------
+/api
+/bin/
+/build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# --- Tests et couverture -----------------------------------------------------
+*.test
+*.out
+coverage.txt
+coverage.html
+profile.cov
+
+# --- Sauvegardes de base de données ------------------------------------------
+/backups/
+*.sql.gz
+*.dump
+
+# --- Caches et dépendances ---------------------------------------------------
+# On versionne go.mod et go.sum, mais pas le cache de modules téléchargés.
+/vendor/
+
+# --- Environnements de développement (éditeurs / IDE) ------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Systèmes d'exploitation -------------------------------------------------
+.DS_Store
+Thumbs.db

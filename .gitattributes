@@ -1,0 +1,49 @@
+# =============================================================================
+# .gitattributes — Attributs Git du dépôt
+# -----------------------------------------------------------------------------
+# Assure un traitement COHÉRENT des fichiers quel que soit le système
+# d'exploitation (Windows/macOS/Linux) et l'éditeur du contributeur.
+# =============================================================================
+
+# --- Fins de ligne -----------------------------------------------------------
+# Git détecte automatiquement les fichiers texte et normalise leurs fins de ligne
+# en LF DANS le dépôt (jamais de CRLF committé). On force aussi LF dans la copie
+# de travail : indispensable pour un projet Go + Docker + scripts shell, où un
+# CRLF casserait les scripts exécutés dans les conteneurs Linux.
+* text=auto eol=lf
+
+# Fins de ligne explicites pour les principaux types (défense en profondeur).
+*.go         text eol=lf
+*.sql        text eol=lf
+*.sh         text eol=lf
+*.md         text eol=lf
+*.yml        text eol=lf
+*.yaml       text eol=lf
+*.json       text eol=lf
+*.mod        text eol=lf
+*.sum        text eol=lf
+Dockerfile   text eol=lf
+Makefile     text eol=lf
+.env.example text eol=lf
+
+# --- Markdown : espaces de fin de ligne SIGNIFICATIFS ------------------------
+# En Markdown, DEUX espaces en fin de ligne forcent un retour à la ligne
+# (« hard break »). On demande donc à Git de NE PAS considérer ces espaces comme
+# une erreur (`git diff --check`) et de ne jamais les supprimer
+# (`git apply --whitespace=fix`). Sans cela, un outil pourrait « nettoyer » ces
+# espaces et casser la mise en forme de la documentation.
+*.md         whitespace=-trailing-space
+
+# --- Diffs plus lisibles -----------------------------------------------------
+# En-têtes de section de diff adaptés au Go : Git affiche la signature de la
+# fonction concernée en haut de chaque « hunk » (pilote de diff intégré).
+*.go         diff=golang
+
+# --- Fichiers binaires (jamais de conversion de fins de ligne) ---------------
+# Préventif : si l'on ajoute un jour des captures d'écran à la documentation.
+*.png        binary
+*.jpg        binary
+*.jpeg       binary
+*.gif        binary
+*.ico        binary
+*.pdf        binary

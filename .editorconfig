@@ -1,0 +1,40 @@
+# =============================================================================
+# .editorconfig — Réglages d'éditeur partagés (https://editorconfig.org)
+# -----------------------------------------------------------------------------
+# Complète .gitattributes : là où .gitattributes agit sur Git, .editorconfig agit
+# sur l'ÉDITEUR (VS Code, JetBrains, Vim...) au moment de la frappe et de
+# l'enregistrement. La plupart des éditeurs le lisent nativement (nativement ou
+# via une extension), même hors d'un dépôt Git.
+# =============================================================================
+root = true
+
+# Réglages par défaut pour tous les fichiers.
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Go : indentation par TABULATIONS (comme l'impose gofmt).
+[*.go]
+indent_style = tab
+
+# Markdown : NE PAS supprimer les espaces de fin de ligne — deux espaces y
+# signifient un retour à la ligne forcé (« hard break »). C'est le pendant, côté
+# éditeur, de la règle « *.md whitespace=-trailing-space » du .gitattributes.
+[*.md]
+trim_trailing_whitespace = false
+
+# YAML / JSON : indentation par 2 espaces (convention).
+[*.{yml,yaml,json}]
+indent_style = space
+indent_size = 2
+
+# SQL : indentation par 4 espaces (comme les scripts du dossier sql/).
+[*.sql]
+indent_style = space
+indent_size = 4
+
+# Makefile : les tabulations sont OBLIGATOIRES.
+[Makefile]
+indent_style = tab
