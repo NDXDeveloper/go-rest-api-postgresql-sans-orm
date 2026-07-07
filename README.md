@@ -222,10 +222,10 @@ injectées « à la main » depuis `cmd/api/main.go` (le *composition root*).
                     └───────────────────────┬──────────────────────────┘
                                             │  pilote pgx (database/sql)
                     ┌───────────────────────▼──────────────────────────┐
-                    │  PostgreSQL 18 : tables, types (ENUM/DOMAIN/      │
-                    │  JSONB), vues + vue matérialisée, fonctions et    │
-                    │  procédures PL/pgSQL, triggers, index avancés,    │
-                    │  extensions et tâches pg_cron                     │
+                    │  PostgreSQL 18 : tables, types (ENUM/DOMAIN/     │
+                    │  JSONB), vues + vue matérialisée, fonctions et   │
+                    │  procédures PL/pgSQL, triggers, index avancés,   │
+                    │  extensions et tâches pg_cron                    │
                     └──────────────────────────────────────────────────┘
 ```
 
